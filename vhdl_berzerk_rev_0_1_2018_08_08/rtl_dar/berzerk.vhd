@@ -327,7 +327,7 @@ begin
 	end if;
 end process;
 
-process (clock_10, cpu_iorq_n, cpu_addr)
+process (clock_10, cpu_iorq_n, cpu_addr, reset)
 begin
 	if reset = '1' then
 		cpu_int_n <= '1';
