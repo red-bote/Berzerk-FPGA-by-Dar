@@ -269,7 +269,9 @@ begin
     end if;
   end process;
 
+    -- active-low shutdown pin
   O_PMODAMP2_SHUTD <= sw(14);
+    -- gain pin is driven high there is a 6 dB gain, low is a 12 dB gain 
   O_PMODAMP2_GAIN  <= sw(15);
   O_PMODAMP2_AIN   <= pwm_accumulator(12);
 
