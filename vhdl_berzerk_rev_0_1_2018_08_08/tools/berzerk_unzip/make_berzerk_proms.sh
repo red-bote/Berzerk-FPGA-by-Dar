@@ -1,39 +1,26 @@
 #!/bin/bash
-# converted from make_berzerk_proms.bat by Red~Bote (Glenn Neidermeier) 10/2024
+# Port of make_berzerk_proms.bat for the Basys3 build. Run from this
+# directory (the unzipped berzerk.zip) by contrib/tools/roms.sh, which sets:
+#   MAKE_VHDL_PROM  path of the compiled make_vhdl_prom
+#   PROM_DIR        output directory for the PROM VHDL
+# make_vhdl_prom names the entity after its output argument, so it runs inside
+# PROM_DIR with bare output file names.
+# The .bat uses descriptive ROM names; the MAME berzerk.zip uses position names,
+# read here directly: berzerk_rc31_1c.rom0.1c = 1c-0, ..._1d.rom1.1d = 1d-1,
+# ..._3d.rom2.3d = 3d-2, ..._5d.rom3.5d = 5d-3, ..._6d.rom4.6d = 6d-4,
+# ..._5c.rom5.5c = 5c-5, berzerk_r_vo_1c.1c = 1c, berzerk_r_vo_2c.2c = 2c.
 
-#copy /B berzerk_rc31_1d.rom1.1d + berzerk_rc31_3d.rom2.3d + berzerk_rc31_5d.rom3.5d + berzerk_rc31_6d.rom4.6d + berzerk_rc31_5c.rom5.5c prog2.bin
-#copy /B berzerk_r_vo_1c.1c + berzerk_r_vo_2c.2c speech.bin
+set -euo pipefail
 
-#make_vhdl_prom berzerk_rc31_1c.rom0.1c berzerk_program1.vhd
-#make_vhdl_prom prog2.bin berzerk_program2.vhd
-#make_vhdl_prom speech.bin berzerk_speech_rom.vhd
+: "${MAKE_VHDL_PROM:?}" "${PROM_DIR:?}"
+roms="$(pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 
-# 1c    berzerk_r_vo_1c.1c
-# 1c-0  berzerk_rc31_1c.rom0.1c
-# 1d-1  berzerk_rc31_1d.rom1.1d
-# 2c    berzerk_r_vo_2c.2c
-# 3d-2  berzerk_rc31_3d.rom2.3d
-# 5c-5  berzerk_rc31_5c.rom5.5c
-# 5d-3  berzerk_rc31_5d.rom3.5d
-# 6d-4  berzerk_rc31_6d.rom4.6d
+cat 1d-1 3d-2 5d-3 6d-4 5c-5 > "$tmp/prog2.bin"
+cat 1c 2c > "$tmp/speech.bin"
 
-# rom0.1c  
-# rom1.1d  berzerk_rc31_1d.rom1.1d
-# rom2.3d  berzerk_rc31_3d.rom2.3d
-# rom3.5d  berzerk_rc31_5d.rom3.5d
-# rom4.6d  berzerk_rc31_6d.rom4.6d
-# rom5.5c  berzerk_rc31_5c.rom5.5c
-
-
-cat  1d-1  3d-2  5d-3  6d-4  5c-5 > prog2.bin
-cat  1c 2c  > speech.bin
-
-./make_vhdl_prom  1c-0       berzerk_program1.vhd
-./make_vhdl_prom  prog2.bin  berzerk_program2.vhd
-./make_vhdl_prom  speech.bin berzerk_speech_rom.vhd
-
-rm prog2.bin speech.bin
-
-
-
-
+cd "$PROM_DIR"
+"$MAKE_VHDL_PROM" "$roms/1c-0"       berzerk_program1.vhd
+"$MAKE_VHDL_PROM" "$tmp/prog2.bin"   berzerk_program2.vhd
+"$MAKE_VHDL_PROM" "$tmp/speech.bin"  berzerk_speech_rom.vhd
