@@ -16,8 +16,9 @@
 --
 -- Main features :
 --  PS2 keyboard input @onboard USB HID (PS/2 emulation)
---  Joystick input     @JXADC pins 1/2/3/4/7 = right/left/down/up/fire (active low)
---  Audio pwm output   @PmodAMP2 on JA pins 1/2/4; sw15 = audio disable, sw14 = gain
+--  Joystick input     @JA pins 1/2/3/4/7 = right/left/down/up/fire (active low)
+--  Audio pwm output   @PmodAMP2 on JXADC pins 1/2/4; sw15 = audio disable
+--  Scanlines          sw14 = alternate lines at 50% (31kHz only)
 --
 -- Uses 1 MMCM (clk_wiz_0) for 10MHz from 100MHz
 --
@@ -71,7 +72,7 @@ port(
   vga_hs    : out std_logic;
   vga_vs    : out std_logic;
 
-  JXADC            : in  std_logic_vector(4 downto 0);
+  joy_n            : in  std_logic_vector(4 downto 0);
   ps2_clk          : in  std_logic;
   ps2_dat          : in  std_logic;
   O_PMODAMP2_AIN   : out std_logic;
@@ -96,6 +97,8 @@ architecture struct of berzerk_basys3 is
   signal vsync     : std_logic;
   signal blankn    : std_logic;
   signal tv15Khz_mode : std_logic;
+  signal vga_r_i, vga_g_i, vga_b_i : std_logic_vector(3 downto 0);
+  signal hsync_d, vsync_d, scanline, dim : std_logic;
 
   signal video_r : std_logic_vector(3 downto 0);
   signal video_g : std_logic_vector(3 downto 0);
@@ -107,11 +110,11 @@ architecture struct of berzerk_basys3 is
   -- 2-FF synchronizers for the asynchronous inputs
   signal ps2_clk_meta, ps2_clk_s : std_logic := '1';
   signal ps2_dat_meta, ps2_dat_s : std_logic := '1';
-  signal jxadc_meta, jxadc_s     : std_logic_vector(4 downto 0) := (others => '1');
+  signal stick_meta, stick_s     : std_logic_vector(4 downto 0) := (others => '1');
   signal btn_meta, btn_s         : std_logic_vector(3 downto 0) := (others => '0'); -- U, D, L, R
   attribute ASYNC_REG : string;
   attribute ASYNC_REG of ps2_clk_meta, ps2_clk_s, ps2_dat_meta, ps2_dat_s : signal is "TRUE";
-  attribute ASYNC_REG of jxadc_meta, jxadc_s, btn_meta, btn_s : signal is "TRUE";
+  attribute ASYNC_REG of stick_meta, stick_s, btn_meta, btn_s : signal is "TRUE";
 
   signal kbd_intr      : std_logic;
   signal kbd_scancode  : std_logic_vector(7 downto 0);
@@ -146,7 +149,7 @@ begin
     if rising_edge(clock_10) then
       ps2_clk_meta <= ps2_clk;      ps2_clk_s <= ps2_clk_meta;
       ps2_dat_meta <= ps2_dat;      ps2_dat_s <= ps2_dat_meta;
-      jxadc_meta   <= JXADC;        jxadc_s   <= jxadc_meta;
+      stick_meta   <= joy_n;        stick_s   <= stick_meta;
       btn_meta     <= btnU & btnD & btnL & btnR;
       btn_s        <= btn_meta;
     end if;
@@ -195,21 +198,21 @@ begin
   blankn <= '1'; -- TBA
 
   -- adapt video to 4bits/color only
-  video_r	<= "1100" when r = '1' and hi = '1' else
+  video_r <= "1100" when r = '1' and hi = '1' else
   "0100" when r = '1' and hi = '0' else
     "0000";
 
-    video_g	<= "1100" when g = '1' and hi = '1' else
+    video_g <= "1100" when g = '1' and hi = '1' else
   "0100" when g = '1' and hi = '0' else
     "0000";
 
-    video_b	<= "1100" when b = '1' and hi = '1' else
+    video_b <= "1100" when b = '1' and hi = '1' else
   "0100" when b = '1' and hi = '0' else
     "0000";
 
-    vga_r <= video_r when blankn = '1' else "0000";
-    vga_g <= video_g when blankn = '1' else "0000";
-    vga_b <= video_b when blankn = '1' else "0000";
+    vga_r_i <= video_r when blankn = '1' else "0000";
+    vga_g_i <= video_g when blankn = '1' else "0000";
+    vga_b_i <= video_b when blankn = '1' else "0000";
 
     -- synchro composite/ synchro horizontale
     --vga_hs <= csync;
@@ -217,6 +220,25 @@ begin
     -- commutation rapide / synchro verticale
     --vga_vs <= '1';
     vga_vs <= '1'   when tv15Khz_mode = '1' else vsync;
+
+    -- scanlines: sw14 up = alternate lines at 50% in 31 kHz mode
+    process (clock_10)
+    begin
+      if rising_edge(clock_10) then
+        hsync_d <= hsync;
+        vsync_d <= vsync;
+        if vsync /= vsync_d then
+          scanline <= '0';
+        elsif hsync = '1' and hsync_d = '0' then
+          scanline <= not scanline;
+        end if;
+      end if;
+    end process;
+
+    dim   <= sw(14) and scanline and not tv15Khz_mode;
+    vga_r <= '0' & vga_r_i(3 downto 1) when dim = '1' else vga_r_i;
+    vga_g <= '0' & vga_g_i(3 downto 1) when dim = '1' else vga_g_i;
+    vga_b <= '0' & vga_b_i(3 downto 1) when dim = '1' else vga_b_i;
 
     -- get scancode from keyboard
 
@@ -229,44 +251,44 @@ begin
       scancode  => kbd_scancode
     );
 
-  -- translate scancode to keys (MAME default keys, PS/2 set 2 codes)
-  -- F0 marks a release; E0 is ignored, as in kbd_joystick (keypad 8/2/4/6
-  -- also act as arrows, Right Ctrl/Alt as Left Ctrl/Alt).
-  process(clock_10)
-  begin
-    if rising_edge(clock_10) then
-      if kbd_intr = '1' then
-        if kbd_scancode = x"F0" then
-          kbd_rel <= '1';
-        elsif kbd_scancode /= x"E0" then
-          kbd_rel <= '0';
-          if kbd_scancode = x"75" then kbd_key(0)  <= not kbd_rel; end if; -- up arrow
-          if kbd_scancode = x"72" then kbd_key(1)  <= not kbd_rel; end if; -- down arrow
-          if kbd_scancode = x"6B" then kbd_key(2)  <= not kbd_rel; end if; -- left arrow
-          if kbd_scancode = x"74" then kbd_key(3)  <= not kbd_rel; end if; -- right arrow
-          if kbd_scancode = x"14" then kbd_key(4)  <= not kbd_rel; end if; -- left ctrl
-          if kbd_scancode = x"11" then kbd_key(5)  <= not kbd_rel; end if; -- left alt
-          if kbd_scancode = x"16" then kbd_key(6)  <= not kbd_rel; end if; -- 1
-          if kbd_scancode = x"1E" then kbd_key(7)  <= not kbd_rel; end if; -- 2
-          if kbd_scancode = x"2E" then kbd_key(8)  <= not kbd_rel; end if; -- 5
-          if kbd_scancode = x"36" then kbd_key(9)  <= not kbd_rel; end if; -- 6
-          if kbd_scancode = x"46" then kbd_key(10) <= not kbd_rel; end if; -- 9
+    -- translate scancode to keys (MAME default keys, PS/2 set 2 codes)
+    -- F0 marks a release; E0 is ignored, as in kbd_joystick (keypad 8/2/4/6
+    -- also act as arrows, Right Ctrl/Alt as Left Ctrl/Alt).
+    process(clock_10)
+    begin
+      if rising_edge(clock_10) then
+        if kbd_intr = '1' then
+          if kbd_scancode = x"F0" then
+            kbd_rel <= '1';
+          elsif kbd_scancode /= x"E0" then
+            kbd_rel <= '0';
+            if kbd_scancode = x"75" then kbd_key(0)  <= not kbd_rel; end if; -- up arrow
+            if kbd_scancode = x"72" then kbd_key(1)  <= not kbd_rel; end if; -- down arrow
+            if kbd_scancode = x"6B" then kbd_key(2)  <= not kbd_rel; end if; -- left arrow
+            if kbd_scancode = x"74" then kbd_key(3)  <= not kbd_rel; end if; -- right arrow
+            if kbd_scancode = x"14" then kbd_key(4)  <= not kbd_rel; end if; -- left ctrl
+            if kbd_scancode = x"11" then kbd_key(5)  <= not kbd_rel; end if; -- left alt
+            if kbd_scancode = x"16" then kbd_key(6)  <= not kbd_rel; end if; -- 1
+            if kbd_scancode = x"1E" then kbd_key(7)  <= not kbd_rel; end if; -- 2
+            if kbd_scancode = x"2E" then kbd_key(8)  <= not kbd_rel; end if; -- 5
+            if kbd_scancode = x"36" then kbd_key(9)  <= not kbd_rel; end if; -- 6
+            if kbd_scancode = x"46" then kbd_key(10) <= not kbd_rel; end if; -- 9
+          end if;
         end if;
       end if;
-    end if;
-  end process;
+    end process;
 
-  -- merge keyboard, JXADC joystick (active low) and buttons; player 2 mirrors
-  -- player 1 as on the DE10-lite top
-  joyHBCPPFRLDU(0) <= kbd_key(0) or not jxadc_s(3);           -- up    (JXADC4)
-  joyHBCPPFRLDU(1) <= kbd_key(1) or not jxadc_s(2);           -- down  (JXADC3)
-  joyHBCPPFRLDU(2) <= kbd_key(2) or not jxadc_s(1);           -- left  (JXADC2)
-  joyHBCPPFRLDU(3) <= kbd_key(3) or not jxadc_s(0);           -- right (JXADC1)
-  joyHBCPPFRLDU(4) <= kbd_key(4) or not jxadc_s(4);           -- fire : left ctrl (JXADC7)
-  joyHBCPPFRLDU(5) <= kbd_key(6) or btn_s(1);                 -- start 1 : 1 or btnL
-  joyHBCPPFRLDU(6) <= kbd_key(7) or btn_s(0);                 -- start 2 : 2 or btnR
-  joyHBCPPFRLDU(7) <= kbd_key(8) or kbd_key(9) or btn_s(3) or btn_s(2); -- coin : 5, 6, btnU, btnD
-  joyHBCPPFRLDU(9 downto 8) <= "00";
+    -- merge keyboard, JA joystick (active low) and buttons; player 2 mirrors
+    -- player 1 as on the DE10-lite top
+    joyHBCPPFRLDU(0) <= kbd_key(0) or not stick_s(3);           -- up    (JA4)
+    joyHBCPPFRLDU(1) <= kbd_key(1) or not stick_s(2);           -- down  (JA3)
+    joyHBCPPFRLDU(2) <= kbd_key(2) or not stick_s(1);           -- left  (JA2)
+    joyHBCPPFRLDU(3) <= kbd_key(3) or not stick_s(0);           -- right (JA1)
+    joyHBCPPFRLDU(4) <= kbd_key(4) or not stick_s(4);           -- fire : left ctrl (JA7)
+    joyHBCPPFRLDU(5) <= kbd_key(6) or btn_s(1);                 -- start 1 : 1 or btnL
+    joyHBCPPFRLDU(6) <= kbd_key(7) or btn_s(0);                 -- start 2 : 2 or btnR
+    joyHBCPPFRLDU(7) <= kbd_key(8) or kbd_key(9) or btn_s(3) or btn_s(2); -- coin : 5, 6, btnU, btnD
+    joyHBCPPFRLDU(9 downto 8) <= "00";
 
     -- pwm sound output
 
@@ -277,8 +299,8 @@ begin
       end if;
     end process;
 
-  O_PMODAMP2_AIN   <= pwm_accumulator(12);
-  O_PMODAMP2_SHUTD <= not sw(15); -- sw15 up = amp shut down (audio disabled)
-  O_PMODAMP2_GAIN  <= not sw(14); -- sw14 up = gain active (GAIN active low)
+    O_PMODAMP2_AIN   <= pwm_accumulator(12);
+    O_PMODAMP2_SHUTD <= not sw(15); -- sw15 up = amp shut down (audio disabled)
+    O_PMODAMP2_GAIN  <= '1';        -- fixed 6 dB gain
 
 end struct;
